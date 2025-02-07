@@ -28,7 +28,19 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        {children}
+        <div className="bg-gray-50 dark:bg-gray-800 min-h-screen flex flex-col">
+          <header className="bg-white dark:bg-gray-900 p-4 shadow-md">
+            <div className="container mx-auto">
+              <h1 className="text-2xl font-bold text-gray-800 dark:text-white">
+                File Converter
+              </h1>
+            </div>
+          </header>
+          <main className="container mx-auto p-4 flex-grow">{children}</main>
+          <footer className="bg-gray-100 dark:bg-gray-700 p-4 text-center text-gray-500 dark:text-gray-400">
+            &copy; {new Date().getFullYear()} My File Converter
+          </footer>
+        </div>
       </body>
     </html>
   );
