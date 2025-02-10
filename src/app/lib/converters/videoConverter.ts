@@ -1,34 +1,22 @@
-// src/lib/converters/videoConverter.ts
 import { FFmpeg } from "@ffmpeg/ffmpeg";
 import { fetchFile } from "@ffmpeg/util";
-import { promises as fs } from "fs"; // Import the promises API
-import path from "path";
 
-export async function convertVideo(
-  filePath: string,
-  outputFormat: string = "mp4"
-): Promise<string> {
-  try {
-    const ffmpeg = new FFmpeg();
-    if (!ffmpeg.loaded) {
-      await ffmpeg.load();
-    }
+export async function convertVideo(file: File, outputFormat = "mp4") {
+  const ffmpeg = new FFmpeg();
+  await ffmpeg.load(); // Load FFmpeg.wasm
 
-    const inputFileName = path.basename(filePath);
-    const outputFileName = `${path.basename(filePath, path.extname(filePath))}.${outputFormat}`;
-    const outputPath = path.join(path.dirname(filePath), outputFileName); // Output in the same directory
+  const inputFileName = file.name;
+  const outputFileName = `converted.${outputFormat}`;
 
-    ffmpeg.FS("writeFile", inputFileName, await fetchFile(filePath));
+  // Write file to FFmpeg's in-memory filesystem
+  await ffmpeg.writeFile(inputFileName, await fetchFile(file));
 
-    // Example conversion command (adjust as needed)
-    await ffmpeg.run("-i", inputFileName, outputPath);
+  // Execute FFmpeg command for conversion
+  await ffmpeg.exec(["-i", inputFileName, outputFileName]);
 
-    const data = ffmpeg.FS("readFile", outputFileName);
-    await fs.writeFile(outputPath, data); // Write to file system
+  // Read the converted file
+  const data = await ffmpeg.readFile(outputFileName);
 
-    return outputPath; // Return the path to the converted file
-  } catch (error) {
-    console.error("Video conversion error:", error);
-    throw error; // Re-throw the error for handling in the API route
-  }
+  // Create a Blob URL for download
+  return new Blob([data], { type: `video/${outputFormat}` });
 }

@@ -11,6 +11,7 @@ import { v4 as uuidv4 } from "uuid";
  */
 export async function convertAudio(
   inputPath: string,
+  format: string,
   targetFormat: "mp3" | "wav" | "ogg" = "mp3"
 ): Promise<string> {
   return new Promise((resolve, reject) => {

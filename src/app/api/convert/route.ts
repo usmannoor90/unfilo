@@ -1,12 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import formidable from "formidable";
 import { promises as fs } from "fs";
 import path from "path";
 import { v4 as uuidv4 } from "uuid";
-import { file-type as fileType } from "file-type";
+import { fileTypeFromBuffer } from "file-type";
 
 // Converter imports
-import { convertVideo } from "@/app/lib/converters/videoConverter";
 import { convertImage } from "@/app/lib/converters/imageConverter";
 import { convertPdf } from "@/app/lib/converters/pdfConverter";
 import { convertDocx } from "@/app/lib/converters/docxConverter";
@@ -24,28 +22,19 @@ interface ConversionConfig {
 const CONVERSION_CONFIG: ConversionConfig = {
   maxFileSize: 50 * 1024 * 1024, // 50MB
   allowedMimeTypes: [
-    // Video types
-    "video/mp4",
-    "video/webm",
-    "video/mov",
-    "video/avi",
-    // Image types
     "image/jpeg",
     "image/png",
     "image/gif",
     "image/webp",
     "image/tiff",
-    // Document types
     "application/pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    // Audio types
     "audio/mpeg",
     "audio/wav",
     "audio/ogg",
-    // Spreadsheet types
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   ],
-  uploadDir: path.join(process.cwd(), "uploads"),
+  uploadDir: path.join(process.cwd(), "tmp/uploads"),
 };
 
 // Ensure upload directory exists
@@ -57,32 +46,31 @@ async function ensureUploadDirectory() {
   }
 }
 
-// Validate and process file
-async function processUploadedFile(file: formidable.File) {
-  // Detect file type
-  const detectedType = await fileType.fromFile(file.filepath);
+// Process and validate uploaded file
+async function processUploadedFile(buffer: Buffer, originalFilename: string) {
+  const detectedType = await fileTypeFromBuffer(buffer);
 
   if (
     !detectedType ||
     !CONVERSION_CONFIG.allowedMimeTypes.includes(detectedType.mime)
   ) {
-    await fs.unlink(file.filepath);
     throw new Error("Invalid file type");
   }
 
-  // Generate unique filename
-  const uniqueFilename = `${uuidv4()}${path.extname(file.originalFilename || "")}`;
-  const newFilePath = path.join(CONVERSION_CONFIG.uploadDir, uniqueFilename);
+  const uniqueFilename = `${uuidv4()}${path.extname(originalFilename)}`;
+  const filePath = path.join(CONVERSION_CONFIG.uploadDir, uniqueFilename);
 
-  await fs.rename(file.filepath, newFilePath);
+  await fs.writeFile(filePath, buffer);
 
-  return { filePath: newFilePath, fileType: detectedType };
+  return { filePath, fileType: detectedType };
 }
 
 // Conversion handler
-async function convertFile(filePath: string, mimeType: string) {
-  const converters = {
-    "video/": convertVideo,
+async function convertFile(filePath: string, mimeType: string, format: string) {
+  const converters: Record<
+    string,
+    (path: string, format: string) => Promise<string>
+  > = {
     "image/": convertImage,
     "application/pdf": convertPdf,
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
@@ -94,11 +82,89 @@ async function convertFile(filePath: string, mimeType: string) {
 
   for (const [prefix, converter] of Object.entries(converters)) {
     if (mimeType.startsWith(prefix) || mimeType === prefix) {
-      return await converter(filePath);
+      return await converter(filePath, format);
     }
   }
 
   throw new Error("No suitable converter found");
+}
+
+// Cleanup function
+async function cleanupFiles(...filePaths: string[]) {
+  for (const filePath of filePaths) {
+    try {
+      await fs.unlink(filePath);
+    } catch (error) {
+      console.error(`Cleanup error for ${filePath}:`, error);
+    }
+  }
+}
+
+export async function POST(req: NextRequest) {
+  if (!req.body) {
+    return NextResponse.json({ error: "No request body" }, { status: 400 });
+  }
+
+  let originalFilePath: string | undefined;
+  let convertedFilePath: string | undefined;
+
+  try {
+    await ensureUploadDirectory();
+
+    const formData = await req.formData();
+    const file = formData.get("file") as File | null;
+    const format = formData.get("format") as string | null;
+
+    if (!file) {
+      return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
+    }
+
+    if (file.size > CONVERSION_CONFIG.maxFileSize) {
+      return NextResponse.json({ error: "File too large" }, { status: 400 });
+    }
+
+    const bytes = await file.arrayBuffer();
+    const buffer = Buffer.from(bytes);
+
+    const { filePath, fileType } = await processUploadedFile(buffer, file.name);
+    originalFilePath = filePath;
+
+    convertedFilePath = await convertFile(
+      filePath,
+      fileType.mime,
+      format || ""
+    );
+    const filename = path.basename(convertedFilePath);
+    const fileStream = await fs.readFile(convertedFilePath);
+
+    // Schedule cleanup
+    setTimeout(() => {
+      cleanupFiles(originalFilePath!, convertedFilePath!).catch((error) =>
+        console.error("Delayed cleanup error:", error)
+      );
+    }, 1000);
+
+    return new NextResponse(fileStream, {
+      status: 200,
+      headers: {
+        "Content-Type": fileType.mime,
+        "Content-Disposition": `attachment; filename="${filename}"`,
+      },
+    });
+  } catch (error) {
+    // Immediate cleanup on error
+    if (originalFilePath || convertedFilePath) {
+      await cleanupFiles(originalFilePath!, convertedFilePath!).catch((error) =>
+        console.error("Error cleanup error:", error)
+      );
+    }
+
+    console.error("Conversion Error:", error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Conversion failed" },
+      { status: 500 }
+    );
+  }
 }
 
 export const config = {
@@ -106,54 +172,3 @@ export const config = {
     bodyParser: false,
   },
 };
-
-export async function POST(req: NextRequest) {
-  await ensureUploadDirectory();
-
-  try {
-    const form = formidable({
-      maxFileSize: CONVERSION_CONFIG.maxFileSize,
-      uploadDir: CONVERSION_CONFIG.uploadDir,
-    });
-
-    const { files } = await new Promise<{
-      fields: formidable.Fields;
-      files: formidable.Files;
-    }>((resolve, reject) => {
-      form.parse(req as any, (err, fields, files) => {
-        if (err) reject(err);
-        resolve({ fields, files });
-      });
-    });
-
-    if (!files.file) {
-      return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
-    }
-
-    const file = (files.file as formidable.File[])[0];
-    const { filePath, fileType: detectedType } =
-      await processUploadedFile(file);
-
-    const convertedFilePath = await convertFile(filePath, detectedType.mime);
-
-    // Stream converted file
-    const filename = path.basename(convertedFilePath);
-    const fileStream = await fs.readFile(convertedFilePath);
-
-    return new NextResponse(fileStream, {
-      status: 200,
-      headers: {
-        "Content-Type": detectedType.mime,
-        "Content-Disposition": `attachment; filename="${filename}"`,
-      },
-    });
-  } catch (error) {
-    console.error("Conversion Error:", error);
-    return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : "Conversion failed",
-      },
-      { status: 500 }
-    );
-  }
-}

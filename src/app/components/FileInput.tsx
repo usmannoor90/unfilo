@@ -1,68 +1,146 @@
+"use client";
+
+import React, { useCallback, useState } from "react";
 import { useDropzone } from "react-dropzone";
-import { BarLoader } from "react-spinners"; // Import the spinner
+import { Progress } from "@/components/ui/progress";
+import { UploadCloud } from "lucide-react";
+import { motion } from "framer-motion";
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from "@/components/ui/select";
 
 interface FileInputProps {
-  onFileDropped: (file: File) => void;
-  isConverting: boolean; // Add a prop for the loading state
-  errorMessage: string | null; // Add a prop for error messages
+  onFileUpload: (file: File, type?: string) => void;
 }
 
-const FileInput: React.FC<FileInputProps> = ({
-  onFileDropped,
-  isConverting,
-  errorMessage,
-}) => {
+const CONVERSION_OPTIONS: Record<string, string[]> = {
+  image: ["jpeg", "png", "gif", "webp", "tiff"],
+  video: ["mp4", "webm", "mov", "avi"],
+  audio: ["mp3", "wav", "ogg"],
+  document: ["pdf", "docx", "xlsx"],
+};
+
+const FileInput: React.FC<FileInputProps> = ({ onFileUpload }) => {
+  const [file, setFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState<boolean>(false);
+  const [progress, setProgress] = useState<number>(0);
+  const [conversionType, setConversionType] = useState<string>("");
+
+  const simulateUpload = useCallback(
+    (uploadedFile: File, type: string) => {
+      setUploading(true);
+      setProgress(0);
+
+      let progressValue = 0;
+      const interval = setInterval(() => {
+        progressValue += 10;
+        setProgress(progressValue);
+
+        if (progressValue >= 100) {
+          clearInterval(interval);
+          setUploading(false);
+          onFileUpload(uploadedFile, type);
+        }
+      }, 300);
+    },
+    [onFileUpload]
+  );
+
+  const onDrop = useCallback((acceptedFiles: File[]) => {
+    setFile(acceptedFiles[0]);
+    setConversionType("");
+    setProgress(0);
+  }, []);
+
+  const handleConversionTypeChange = (type: string) => {
+    setConversionType(type);
+    if (file) {
+      simulateUpload(file, type);
+    }
+  };
+
   const { getRootProps, getInputProps } = useDropzone({
-    onDrop: (acceptedFiles) => {
-      onFileDropped(acceptedFiles[0]);
-    },
+    onDrop,
     accept: {
-      // Define accepted file types (optional, but recommended)
-      "video/*": [],
-      "image/*": [],
-      "application/pdf": [],
+      "video/*": [".mp4", ".webm", ".mov", ".avi"],
+      "image/*": [".jpeg", ".png", ".gif", ".webp", ".tiff"],
+      "application/pdf": [".pdf"],
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-        [], // DOCX
+        [".docx"],
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [
+        ".xlsx",
+      ],
+      "audio/*": [".mp3", ".wav", ".ogg"],
     },
-    maxFiles: 1, // Limit to one file
-    maxSize: 25 * 1024 * 1024, // 25 MB (match your API limit)
   });
 
+  const getConversionOptions = () => {
+    if (!file) return [];
+    const fileType = file.type.split("/")[0];
+    return CONVERSION_OPTIONS[fileType] || [];
+  };
+
   return (
-    <div className="border-dashed border-2 rounded-lg p-6 flex flex-col items-center justify-center cursor-pointer bg-gray-100 hover:bg-gray-200 transition duration-300">
-      <div {...getRootProps()}>
+    <div className="w-full max-w-xl mx-auto">
+      <div
+        {...getRootProps({ onDrag: undefined })}
+        className="flex flex-col items-center justify-center border-2 border-dashed border-gray-600 p-6 rounded-lg text-center cursor-pointer hover:border-blue-500 transition-colors bg-gray-900 shadow-xl shadow-blue-500/50 w-full"
+      >
         <input {...getInputProps()} />
-        {isConverting && (
-          <BarLoader color="#3b82f6" width={50} height={50} />
-        )}{" "}
-        {/* Show spinner if converting */}
-        {!isConverting && (
+        <UploadCloud className="text-blue-400 w-12 h-12 mb-2 animate-pulse" />
+        {file ? (
           <>
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              className="h-12 w-12 text-gray-500 mb-2"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"
-              />
-            </svg>
-            <p className="text-gray-600 text-lg">
-              Drag &apos;n&apos; drop a file here, or click to select a file
-            </p>
-            <p className="text-gray-500 text-sm mt-2">
-              (Video, Image, PDF, DOCX supported)
-            </p>
+            <p className="text-blue-300 font-medium">{file.name}</p>
+            {getConversionOptions().length > 0 && (
+              <div className="mt-3 w-full">
+                <label className="text-blue-400 text-sm mb-1 block">
+                  Convert To:
+                </label>
+                <Select
+                  onValueChange={handleConversionTypeChange}
+                  value={conversionType}
+                >
+                  <SelectTrigger className="w-full bg-gray-800 border border-blue-500 text-blue-300">
+                    <SelectValue placeholder="Select format" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {getConversionOptions().map((format) => (
+                      <SelectItem
+                        key={format}
+                        value={format}
+                        className="text-blue-300"
+                      >
+                        {format.toUpperCase()}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
           </>
+        ) : (
+          <p className="text-blue-400">
+            Drag & drop a file here, or click to select one
+          </p>
         )}
       </div>
-      {errorMessage && <p className="text-red-500 mt-2">{errorMessage}</p>}{" "}
-      {/* Display error */}
+      {uploading && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.3 }}
+          className="w-full mt-3"
+        >
+          <Progress
+            value={progress}
+            className="w-full h-2 bg-blue-500 border border-blue-500"
+          />
+        </motion.div>
+      )}
     </div>
   );
 };

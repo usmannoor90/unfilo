@@ -11,6 +11,7 @@ import { v4 as uuidv4 } from "uuid";
  */
 export async function convertSpreadsheet(
   inputPath: string,
+  format: string,
   targetFormat: "xlsx" | "csv" | "pdf" = "xlsx"
 ): Promise<string> {
   const workbook = new ExcelJS.Workbook();
